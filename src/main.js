@@ -2,7 +2,6 @@ import "./main.css";
 
 import * as THREE from "three";
 import { ARButton } from "./jsm/webxr/ARButton.js";
-import { NFTStorage } from "nft.storage";
 import { OrbitControls } from "./jsm/controls/OrbitControls.js";
 import { GLTFLoader } from "./jsm/loaders/GLTFLoader.js";
 import { GLTFExporter } from "./jsm/exporters/GLTFExporter.js";
@@ -32,8 +31,13 @@ const params = {
   }
 };
 
+const PINATA_UPLOAD_ENDPOINT = "https://api.pinata.cloud/pinning/pinFileToIPFS";
+const PINATA_JSON_ENDPOINT = "https://api.pinata.cloud/pinning/pinJSONToIPFS";
+const PINATA_GATEWAY = "https://gateway.pinata.cloud/ipfs/";
+const PINATA_JWT = import.meta.env.VITE_PINATA_JWT || "";
+const PROJECT_URL = "https://pitcher.bluepointart.uk/";
+
 let geo;
-const currentDate = new Date();
 
 let node;
 let renderer;
@@ -55,37 +59,44 @@ const gltfparams = {
   maxTextureSize: 1024
 };
 
+function getCaptureTimestamp() {
+  return new Date().toISOString();
+}
+
 async function getLocation(metadata) {
+  if (!navigator.geolocation) {
+    return;
+  }
+
+  showMessage(`> getting your location`);
+
   const options = {
     enableHighAccuracy: true,
     timeout: 5000,
     maximumAge: 0
   };
 
-  function success(pos) {
-    const crd = pos.coords;
-
-    metadata.attributes.push({
-      trait_type: "Latitude",
-      value: crd.latitude
-    });
-    metadata.attributes.push({
-      trait_type: "Longitude",
-      value: crd.longitude
-    });
-  }
-
-  function error(err) {
-    console.warn(`ERROR(${err.code}): ${err.message}`);
-  }
-  if (navigator.geolocation) {
-    showMessage(`> getting your location`);
-    geo = navigator.geolocation.getCurrentPosition(
-      success,
-      error,
+  await new Promise((resolve) => {
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const crd = pos.coords;
+        metadata.attributes.push({
+          trait_type: "Latitude",
+          value: crd.latitude
+        });
+        metadata.attributes.push({
+          trait_type: "Longitude",
+          value: crd.longitude
+        });
+        resolve();
+      },
+      (err) => {
+        console.warn(`ERROR(${err.code}): ${err.message}`);
+        resolve();
+      },
       options
     );
-  }
+  });
 }
 
 csgEvaluator.attributes = ["position", "normal"];
@@ -148,15 +159,165 @@ async function showLink(url) {
   }
 }
 
-async function save(blob, filename) {
-  const file = [new File([blob], filename)];
-  showMessage("> creating NFT.storage client");
-  const token =
-    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkaWQ6ZXRocjoweGJhODFBQkJGOEJkQ0ZkMTA0QTE2RUU3NjU2MjAzMzQzN0UyQzgzMGMiLCJpc3MiOiJuZnQtc3RvcmFnZSIsImlhdCI6MTY4MzkyMDM2OTYxOCwibmFtZSI6Ik1pbGttYWlkJ3MgUGl0Y2hlciJ9.yIQyeuFRGZKiTLoCIKUCwHBaV5L6tSV97M-jfHgms1k";
+function sanitizeTraitKey(key) {
+  return key
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/gi, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 40) || "attribute";
+}
 
-  const client = new NFTStorage({ token: token });
-  const metadata = {
-    name: "Milkmaid's Pitcher",
+function buildPinataMetadata(metadata, extraKeyValues = {}) {
+  const keyvalues = { ...extraKeyValues };
+  if (Array.isArray(metadata.attributes)) {
+    metadata.attributes.forEach((attribute) => {
+      if (!attribute || !attribute.trait_type) {
+        return;
+      }
+      const key = sanitizeTraitKey(attribute.trait_type);
+      if (!(key in keyvalues)) {
+        keyvalues[key] = String(attribute.value ?? "");
+      }
+    });
+  }
+
+  return {
+    name: metadata.name || "milkmaids-pitcher-snapshot",
+    keyvalues
+  };
+}
+
+async function uploadSnapshotToPinata(blob, filename, metadata, captureTimestamp) {
+  if (!PINATA_JWT) {
+    throw new Error(
+      "Missing Pinata JWT. Set VITE_PINATA_JWT in your environment before uploading."
+    );
+  }
+
+  const file = new File([blob], filename, {
+    type: blob.type || "application/octet-stream"
+  });
+
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append(
+    "pinataMetadata",
+    JSON.stringify(
+      buildPinataMetadata(metadata, {
+        asset_filename: filename,
+        content_type: file.type || inferMimeType(filename),
+        capture_time: captureTimestamp
+      })
+    )
+  );
+  formData.append(
+    "pinataOptions",
+    JSON.stringify({
+      cidVersion: 1
+    })
+  );
+
+  const response = await fetch(PINATA_UPLOAD_ENDPOINT, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${PINATA_JWT}`
+    },
+    body: formData
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Pinata upload failed: ${response.status} ${errorText}`);
+  }
+
+  const json = await response.json();
+  if (!json || !json.IpfsHash) {
+    throw new Error("Pinata upload did not return an IpfsHash");
+  }
+
+  return json.IpfsHash;
+}
+
+function inferMimeType(filename) {
+  const lower = filename.toLowerCase();
+  if (lower.endsWith(".glb")) {
+    return "model/gltf-binary";
+  }
+  if (lower.endsWith(".gltf")) {
+    return "model/gltf+json";
+  }
+  return "application/octet-stream";
+}
+
+function buildMintMetadata(baseMetadata, snapshotCid, filename, blob) {
+  const uri = `ipfs://${snapshotCid}`;
+  const mimeType = blob.type || inferMimeType(filename);
+  const attributes = Array.isArray(baseMetadata.attributes)
+    ? [...baseMetadata.attributes]
+    : [];
+
+  attributes.push({
+    trait_type: "Asset CID",
+    value: snapshotCid
+  });
+  attributes.push({
+    trait_type: "Asset Filename",
+    value: filename
+  });
+
+  return {
+    name: baseMetadata.name,
+    description: baseMetadata.description,
+    image: baseMetadata.image,
+    animation_url: uri,
+    external_url: PROJECT_URL,
+    attributes,
+    files: [
+      {
+        uri,
+        type: mimeType,
+        name: filename
+      }
+    ]
+  };
+}
+
+async function uploadMetadataJsonToPinata(metadataPayload) {
+  if (!PINATA_JWT) {
+    throw new Error("Missing Pinata JWT. Unable to pin metadata JSON.");
+  }
+
+  const response = await fetch(PINATA_JSON_ENDPOINT, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${PINATA_JWT}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      pinataMetadata: buildPinataMetadata(metadataPayload, {
+        content_type: "application/json"
+      }),
+      pinataContent: metadataPayload
+    })
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Pinata metadata upload failed: ${response.status} ${errorText}`);
+  }
+
+  const json = await response.json();
+  if (!json || !json.IpfsHash) {
+    throw new Error("Pinata metadata upload did not return an IpfsHash");
+  }
+
+  return json.IpfsHash;
+}
+
+async function save(blob, filename) {
+  const captureTimestamp = getCaptureTimestamp();
+  const baseMetadata = {
+    name: "Milkmaid's Pitcher Snapshot",
     description:
       "A unique 3d model generated by 'Milkmaid's Pitcher' digital art installation. The pitcher is part of the 'Dystopia of Imitation' collection.",
     image:
@@ -167,37 +328,60 @@ async function save(blob, filename) {
         value: "Jarek Solecki @ Dystopia of imitation"
       },
       {
-        trait_type: "Date",
-        value: currentDate
+        trait_type: "Capture Timestamp",
+        value: captureTimestamp
       }
     ]
   };
-  const options = {
-    pin: true
-  };
 
-  await getLocation(metadata);
+  await getLocation(baseMetadata);
 
-  const cid = await client.storeBlob(blob, metadata, options);
+  showMessage("> preparing Pinata upload");
 
-  showMessage(`> NFT.storage now hosting ${cid}`);
-  showMessage("> you can download your own");
-  showMessage(`> "Milkmaid's pitcher" from: `);
-  showLink(`https://ipfs.io/ipfs/${cid}`);
-  showMessage(`> some browsers refresh the page`);
-  showMessage(`> after downloading the file`);
-  //}
+  if (!PINATA_JWT) {
+    showMessage(
+      "> Pinata token missing. Set VITE_PINATA_JWT in your .env to enable uploads"
+    );
+    saveBlob(blob, filename);
+    return;
+  }
+
+  try {
+    const assetCid = await uploadSnapshotToPinata(
+      blob,
+      filename,
+      baseMetadata,
+      captureTimestamp
+    );
+    const metadataPayload = buildMintMetadata(
+      baseMetadata,
+      assetCid,
+      filename,
+      blob
+    );
+    const metadataCid = await uploadMetadataJsonToPinata(metadataPayload);
+
+    showMessage(`> Pinata now hosting asset ${assetCid}`);
+    showMessage(`> Metadata pinned as ${metadataCid}`);
+    showMessage("> you can mint using the metadata URI");
+    showLink(`${PINATA_GATEWAY}${metadataCid}`);
+    showMessage(`> asset preview from Pinata gateway:`);
+    showLink(`${PINATA_GATEWAY}${assetCid}`);
+  } catch (error) {
+    console.error(error);
+    showMessage("> unable to reach Pinata, downloaded snapshot locally instead");
+    saveBlob(blob, filename);
+  }
 }
 
 function saveString(text, filename) {
-  save(new Blob([text], { type: "text/plain" }), filename);
+  const type = inferMimeType(filename);
+  save(new Blob([text], { type }), filename);
 }
 
 function saveArrayBuffer(buffer, filename) {
-  save(
-    new Blob([buffer], { type: "application/octet-stream" }),
-    filename
-  );
+  const type = inferMimeType(filename);
+  save(new Blob([buffer], { type }), filename);
 }
 
 async function downloadPitcher(event) {
