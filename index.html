@@ -1,613 +1,96 @@
 <!DOCTYPE html>
-<!--
-    animation of a 3D object
-    split between different virtual spaces,
-in this case I have 2 pieces of pitcher one in webGl another in webXR
-  
--->
-
-<!--
-TODO:
-  screen shot
-  minting NFT
-
--->
-<!--
-  Three.js r157dev 
-  credits:
-  the credits and honour and love to all the contributors to Threejs and three-bvh-csg GUYS YOU ARE ROCKING!
-
-  "Liquid Splash 3" (https://skfb.ly/6UJSw) by MAMA's Sneaker Stop is licensed under Creative Commons Attribution (http://creativecommons.org/licenses/by/4.0/).
--->
-
 <html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"
+    />
+    <title>Milkmaid's Pitcher by Jarek Solecki</title>
+    <meta
+      property="og:title"
+      content="Milkmaid s Pitcher by Jarek Solecki"
+    />
+    <meta
+      property="og:image"
+      content="https://storage.fleek-internal.com/54c212c3-61ec-458b-aff6-d56851b32e8e-bucket/milkmaidpitcher/milkmaidspitcher_tn.jpg"
+    />
+    <meta
+      property="og:description"
+      content="Milkmaid s Pitcher is an art installation, part of the Dystopia of Imitation series. The single pitcher is installed in various digital realities. Try to imagine the pitcher."
+    />
+    <meta property="og:url" content="https://pitcher.bluepointart.uk/" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="627" />
+    <meta property="og:type" content="website" />
 
-<head>
-  <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
-  <!-- Google tag (gtag.js) -->
-  <script async src="https://www.googletagmanager.com/gtag/js?id=G-4PY4W9R7FJ"></script>
-  <script>
-    window.dataLayer = window.dataLayer || [];
-    function gtag() {
-      dataLayer.push(arguments);
-    }
-    gtag("js", new Date());
-
-    gtag("config", "G-4PY4W9R7FJ");
-  </script>
-
-  <meta property="og:title" content="Milkmaid s Pitcher by Jarek Solecki" />
-  <meta property="og:image"
-    content="https://storage.fleek-internal.com/54c212c3-61ec-458b-aff6-d56851b32e8e-bucket/milkmaidpitcher/milkmaidspitcher_tn.jpg" />
-  <meta property="og:description" content="Milkmaid s Pitcher is an art
-    installation, part of the Dystopia of Imitation series. The single
-    pitcher is installed in various digital realities. Try to imagine the
-    pitcher. " />
-  <meta property="og:url" content="https://pitcher.bluepointart.uk/" />
-  <meta property="og:image:width" content="1200" />
-  <meta property="og:image:height" content="627" />
-  <meta property="og:type" content="website" />
-
-  <title>Milkmaid's Pitcher by Jarek Solecki</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-
-  <link rel="stylesheet" type="text/css" href="main.css" />
-</head>
-
-<body>
-  <div id="loading">loading...</div>
-  <div id="output"></div>
-  <script type="importmap">
-      {
-        "imports": {
-          "three": "../build/three.module.min.js",
-          "three/addons/": "../jsm/",
-          "three/loaders/": "../jsm/loaders/",
-          "three/draco": "../jsm/libs/draco",
-          "three-mesh-bvh": "https://unpkg.com/three-mesh-bvh@^0.6.6/build/index.module.js",
-          "three-bvh-csg": "https://unpkg.com/three-bvh-csg@^0.0.10/build/index.module.js"
-        }
+    <!-- Google tag (gtag.js) -->
+    <script
+      async
+      src="https://www.googletagmanager.com/gtag/js?id=G-4PY4W9R7FJ"
+    ></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag() {
+        dataLayer.push(arguments);
       }
+      gtag("js", new Date());
+      gtag("config", "G-4PY4W9R7FJ");
     </script>
-  <script type="module">
-    import * as THREE from "three";
-    import { ARButton } from "three/addons/webxr/ARButton.js";
-    import { NFTStorage } from "https://cdn.jsdelivr.net/npm/nft.storage/dist/bundle.esm.min.js";
-    import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-    import { GLTFLoader } from "three/loaders/GLTFLoader.js";
-    import { GLTFExporter } from "./jsm/exporters/GLTFExporter.js";
-    import { DRACOLoader } from "three/loaders/DRACOLoader.js";
-    import * as BufferGeometryUtils from "three/addons/utils/BufferGeometryUtils.js";
-    import { MeshoptDecoder } from "three/addons/libs/meshopt_decoder.module.js";
-    import { MeshSurfaceSampler } from "three/addons/math/MeshSurfaceSampler.js";
-    import {
-      Brush,
-      Evaluator,
-      //ADDITION              // A ∪ B
-      SUBTRACTION, // A - B 1
-      REVERSE_SUBTRACTION, // B - A 2
-      DIFFERENCE, // A ⊕ B 3
-      INTERSECTION // A ∩ B
-    } from "three-bvh-csg";
-    //import html2canvas from "https://cdn.skypack.dev/html2canvas";
-
-    const params = {
-      operation: 3,
-      wireframe: false,
-      displayBrushes: false,
-      shadows: true,
-      useGroups: true,
-
-      randomize: () => {
-        updateCSG();
-      }
-    };
-
-    const filename = "models/Pitcjer2100.glb";
-    let geo, lat, long;
-    const currentDate = new Date();
-
-    let stats, node, files;
-    let renderer, camera, scene, controls, gui, outputContainer;
-    let pitcherBrush, brush, brushes;
-    let material, surfaceSampler;
-    let resultObject, result;
-    let csgEvaluator = new Evaluator();
-    let isAR;
-    let getARImageData = false;
-    const gltfparams = {
-      trs: false,
-      onlyVisible: false,
-      binary: true,
-      maxTextureSize: 1024
-    };
-
-    async function getLocation(metadata) {
-      const options = {
-        enableHighAccuracy: true,
-        timeout: 5000,
-        maximumAge: 0
-      };
-
-      function success(pos) {
-        const crd = pos.coords;
-
-        metadata.attributes.push({
-          trait_type: "Latitude",
-          value: crd.latitude
-        });
-        metadata.attributes.push({
-          trait_type: "Longitude",
-          value: crd.longitude
-        });
-      }
-
-      function error(err) {
-        console.warn(`ERROR(${err.code}): ${err.message}`);
-      }
-      if (navigator.geolocation) {
-        showMessage(`> getting your location`);
-        geo = navigator.geolocation.getCurrentPosition(
-          success,
-          error,
-          options
-        );
-      }
-    }
-
-    csgEvaluator.attributes = ["position", "normal"];
-    csgEvaluator.useGroups = true;
-
-    const materialMap = new Map();
-
-    async function exportGLTF(input) {
-      const gltfExporter = new GLTFExporter();
-
-      const options = {
-        trs: gltfparams.trs,
-        onlyVisible: gltfparams.onlyVisible,
-        binary: gltfparams.binary,
-        maxTextureSize: gltfparams.maxTextureSize
-      };
-      gltfExporter.parse(
-        input,
-        function (resultE) {
-          if (resultE instanceof ArrayBuffer) {
-            saveArrayBuffer(resultE, "scene.glb");
-          } else {
-            const output = JSON.stringify(resultE, null, 2);
-            saveString(output, "scene.gltf");
-          }
-        },
-        function (error) {
-          console.log("An error happened during parsing", error);
-        },
-        options
-      );
-    }
-    const link = document.createElement("a");
-    link.style.display = "none";
-    document.body.appendChild(link); // Firefox workaround, see #6594
-
-    async function showMessage(text) {
-      node = document.createElement("div");
-      node.id = "node";
-      node.innerText = text;
-      if (isAR) {
-        document.getElementById("overlayOutput").appendChild(node);
-      } else {
-        output.appendChild(node);
-      }
-    }
-
-    async function showLink(url) {
-      node = document.createElement("a");
-      node.id = "node-l";
-      node.href = url;
-      node.innerText = `> ${url}`;
-      node.target = "_blank";
-      if (isAR) {
-        document.getElementById("overlayOutput").appendChild(node);
-        //node.click();
-        //document.getElementById("overlayOutput").removeChild(node);
-      } else {
-        output.appendChild(node);
-      }
-    }
-
-    async function save(blob, filename) {
-      const file = [new File([blob], filename)];
-      showMessage("> creating NFT.storage client");
-      const token =
-        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkaWQ6ZXRocjoweGJhODFBQkJGOEJkQ0ZkMTA0QTE2RUU3NjU2MjAzMzQzN0UyQzgzMGMiLCJpc3MiOiJuZnQtc3RvcmFnZSIsImlhdCI6MTY4MzkyMDM2OTYxOCwibmFtZSI6Ik1pbGttYWlkJ3MgUGl0Y2hlciJ9.yIQyeuFRGZKiTLoCIKUCwHBaV5L6tSV97M-jfHgms1k";
-
-      const client = new NFTStorage({ token: token });
-      const metadata = {
-        name: "Milkmaid's Pitcher",
-        description:
-          "A unique 3d model generated by 'Milkmaid's Pitcher' digital art installation. The pitcher is part of the 'Dystopia of Imitation' collection.",
-        image:
-          "ipfs://bafkreiguof3bexge6u63rdl6slzgh7qbnglee67lhbgbu5sfids6oatayq",
-        attributes: [
-          {
-            trait_type: "Artist",
-            value: "Jarek Solecki @ Dystopia of imitation"
-          },
-          {
-            trait_type: "Date",
-            value: currentDate
-          }
-        ]
-      };
-      const options = {
-        pin: true
-      };
-
-      await getLocation(metadata);
-
-      const cid = await client.storeBlob(blob, metadata, options);
-
-      showMessage(`> NFT.storage now hosting ${cid}`);
-      showMessage("> you can download your own");
-      showMessage(`> "Milkmaid's pitcher" from: `);
-      showLink(`https://ipfs.io/ipfs/${cid}`);
-      showMessage(`> some browsers refresh the page`);
-      showMessage(`> after downloading the file`);
-      //}
-    }
-
-    function saveString(text, filename) {
-      save(new Blob([text], { type: "text/plain" }), filename);
-    }
-
-    function saveArrayBuffer(buffer, filename) {
-      save(
-        new Blob([buffer], { type: "application/octet-stream" }),
-        filename
-      );
-    }
-
-    async function downloadPitcher(event) {
-      event.preventDefault();
-      csgEvaluator.useGroups = params.useGroups;
-      result = csgEvaluator.evaluate(
-        pitcherBrush,
-        brush,
-        params.operation,
-        result
-      );
-
-      result.castShadow = true;
-      result.receiveShadow = true;
-
-      /////////////////////////////////
-      // Instantiate a exporter
-      exportGLTF(result);
-    }
-
-    var saveFile = function (strData, filename) {
-      var link = document.createElement("a");
-      if (typeof link.download === "string") {
-        document.body.appendChild(link); //Firefox requires the link to be in the body
-        link.download = filename;
-        link.href = strData;
-        link.click();
-        document.body.removeChild(link); //remove the link when done
-      } else {
-        location.replace(uri);
-      }
-    };
-
-    function getScreenshot() {
-      const canvas = document.querySelector("canvas");
-      canvas.toBlob((blob) => {
-        saveBlob(blob, `screencapture-${canvas.width}x${canvas.height}.png`);
-      });
-    }
-    function getARScreenshot() {
-      const canvas = renderer.domElement;
-      canvas.toBlob((blob) => {
-        saveBlob(blob, `screencapture-${canvas.width}x${canvas.height}.png`);
-      });
-    }
-    const saveBlob = (function () {
-      const a = document.createElement("a");
-      document.body.appendChild(a);
-      a.style.display = "none";
-      return function saveData(blob, fileName) {
-        const url = window.URL.createObjectURL(blob);
-        a.href = url;
-        a.download = fileName;
-        a.click();
-      };
-    })();
-
-    init();
-    animate();
-
-    async function init() {
-      const output = document.querySelector("#output");
-
-      const downloadButton = document.createElement("button");
-      const textOnButton = document.createTextNode("get a 3D model");
-      downloadButton.appendChild(textOnButton);
-      document.body.appendChild(downloadButton);
-      downloadButton.addEventListener("pointerover", () => {
-        downloadButton.style.opacity = "1";
-      });
-      downloadButton.addEventListener("pointerout", () => {
-        downloadButton.style.opacity = "0.5";
-      });
-      downloadButton.addEventListener("pointerdown", downloadPitcher);
-      downloadButton.id = "download-button";
-      /////////////////////////////////
-
-      showMessage("> you can take a 3D model of the object...");
-
-      outputContainer = document.getElementById("loading");
-
-      // renderer setup
-      renderer = new THREE.WebGLRenderer({
-        antialias: true,
-        alpha: true,
-        preserveDrawingBuffer: true
-      });
-      renderer.setPixelRatio(window.devicePixelRatio);
-      renderer.setSize(window.innerWidth, window.innerHeight);
-      //renderer.setClearColor(bgColor, 1);
-      renderer.shadowMap.enabled = true;
-      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-      renderer.outputEncoding = THREE.sRGBEncoding;
-      renderer.xr.enabled = true;
-      renderer.domElement.id = "myCanvas";
-      document.body.appendChild(renderer.domElement);
-
-      isAR = renderer.xr.isPresenting;
-
-      document.body.appendChild(ARButton.createButton(renderer));
-
-      //////////////////////////////////
-      const screenShotButton = document.getElementById("screenshot");
-      const canvas = document.getElementById("myCanvas");
-      screenShotButton.style.zIndex = "1000000";
-      //screenShotButton.addEventListener("click", getScreenshot);
-      screenShotButton.addEventListener("pointerdown", getScreenshot);
-
-      /////////////////////////////////
-
-      // scene setup
-      scene = new THREE.Scene();
-      const texture = new THREE.TextureLoader().load(
-        "textures/landscape.jpg",
-        render
-      );
-      texture.mapping = THREE.EquirectangularReflectionMapping;
-      scene.background = texture;
-
-      // lights
-
-      const light1 = new THREE.DirectionalLight(0xffffff, 4);
-      light1.position.set(0, 2, 3);
-      scene.add(light1, new THREE.AmbientLight(0xb0bec5, 1));
-
-      // camera setup
-      camera = new THREE.PerspectiveCamera(
-        70,
-        window.innerWidth / window.innerHeight,
-        0.01,
-        20
-      );
-
-      const controls = new OrbitControls(camera, renderer.domElement);
-      controls.autoRotate = true;
-      controls.target.set(0, 0, -1);
-      controls.update();
-
-      const dracoLoader = new DRACOLoader();
-      dracoLoader.setDecoderPath("../jsm/libs/draco/");
-      const gltf = await new GLTFLoader()
-        .setDRACOLoader(dracoLoader)
-        .setMeshoptDecoder(MeshoptDecoder)
-        .loadAsync("../models/Pitcjer2100.glb");
-      const geometry = gltf.scene.children[0].geometry;
-
-      geometry.computeVertexNormals();
-      if (geometry) {
-        outputContainer.style.display = "none";
-      }
-
-      pitcherBrush = new Brush(geometry, new THREE.MeshStandardMaterial());
-      pitcherBrush.position.y = -0.5;
-      pitcherBrush.updateMatrixWorld();
-      pitcherBrush.receiveShadow = true;
-      pitcherBrush.rotation.x = 120 * (Math.PI / 180);
-      pitcherBrush.rotation.y = 20 * (Math.PI / 180);
-      pitcherBrush.rotation.z = 190 * (Math.PI / 180);
-
-      pitcherBrush.position.set(0.5, -0.5, -3);
-      pitcherBrush.scale.set(0.5, 0.5, 0.5);
-
-      surfaceSampler = new MeshSurfaceSampler(pitcherBrush);
-      surfaceSampler.build();
-
-      const constance = THREE.AlwaysDepth;
-      pitcherBrush.material.depthFunc = "THREE.AlwaysDepth";
-      pitcherBrush.material.depthWrite = true;
-      pitcherBrush.material.polygonOffset = true;
-      pitcherBrush.material.polygonOffsetFactor = 0.1;
-      pitcherBrush.material.polygonOffsetUnits = 0.1;
-      pitcherBrush.material.side = THREE.DoubleSide;
-      pitcherBrush.material.color.set(0xff8659);
-      // add object displaying the result
-      resultObject = new THREE.Mesh(
-        new THREE.BufferGeometry(),
-        new THREE.MeshStandardMaterial({
-          roughness: 0.1,
-          flatShading: true,
-          polygonOffset: true,
-          polygonOffsetUnits: 1,
-          polygonOffsetFactor: 1
-        })
-      );
-      resultObject.material.transparent = false;
-      resultObject.castShadow = true;
-      resultObject.receiveShadow = true;
-      scene.add(resultObject);
-
-      dracoLoader.setDecoderPath("../jsm/libs/draco/");
-      const gltfbrush = await new GLTFLoader()
-        .setDRACOLoader(dracoLoader)
-        .setMeshoptDecoder(MeshoptDecoder)
-        .loadAsync("../models/fluid1300tr.glb");
-
-      const geometrybrush = gltfbrush.scene.children[0].geometry;
-      geometrybrush.computeVertexNormals();
-
-      brush = new Brush(
-        geometrybrush,
-        new THREE.MeshStandardMaterial({
-          color: 0x00cbff, //0x80cbc4,
-          opacity: 0.5,
-          polygonOffset: true,
-          polygonOffsetUnits: 1,
-          polygonOffsetFactor: 1
-        })
-      );
-      brush.scale.set(0.02, 0.09, 0.05);
-      brush.position.set(0.2, 0, -2.5);
-      brush.rotation.x = (90 * Math.PI) / 180;
-      brush.updateMatrixWorld();
-
-      renderer.xr.addEventListener("sessionstart", function () {
-        document.getElementById("output").style = "display: none";
-
-        const ARbu = document.getElementById("ARButton");
-        document.getElementById("aroverlay").appendChild(ARbu);
-        /*
-        const overlayOutput = document.createElement("div");
-        overlayOutput.id = "overlayOutput";
-        overlayOutput.style = "bottom: 4em";
-*/
-        node = document.createElement("div");
-        node.id = "node";
-        //node.style = "bottom: 2em";
-        node.innerText =
-          "> take a 3D static snapshot of this unique scuplpture";
-        document.getElementById("overlayOutput").appendChild(node);
-
-        showMessage("> take a 3D snapshot of this unique scuplpture");
-        ////
-        const ARdownloadButton = document.getElementById("ARdownloadButton");
-
-        ARdownloadButton.addEventListener("pointerdown", downloadPitcher);
-
-        scene.background = null;
-        if (params.operation === 3) {
-          params.operation = 1;
-        }
-        isAR = renderer.xr.isPresenting;
-
-        updateCSG();
-      });
-      window.addEventListener(
-        "resize",
-        function () {
-          camera.aspect = window.innerWidth / window.innerHeight;
-          camera.updateProjectionMatrix();
-
-          renderer.setSize(window.innerWidth, window.innerHeight);
-        },
-        false
-      );
-    }
-
-    async function updateCSG() {
-      if (pitcherBrush && brush) {
-        csgEvaluator.useGroups = params.useGroups;
-        result = csgEvaluator.evaluate(
-          pitcherBrush,
-          brush,
-          params.operation,
-          result
-        );
-
-        result.castShadow = true;
-        result.receiveShadow = true;
-        scene.add(result);
-      }
-    }
-    ////////////////////////////////////////////////////////////////////////////////////
-
-    const rotatePitcher = () => {
-      if (pitcherBrush) {
-        const t = window.performance.now() + 9000;
-        pitcherBrush.rotation.z = t * -0.0002;
-        //pitcherBrush.rotation.x = t * 0.0001;
-        //pitcherBrush.rotation.y = t * 0.0001;
-        pitcherBrush.updateMatrixWorld();
-      }
-      if (brush) {
-        const t = window.performance.now() + 9000;
-        brush.rotation.y = t * -0.0005;
-        brush.rotation.x = t * -0.0000005;
-        brush.rotation.z = t * -0.00005;
-        brush.updateMatrixWorld();
-      }
-    };
-
-    function animate() {
-      renderer.setAnimationLoop(render);
-    }
-
-    function render() {
-      rotatePitcher();
-      updateCSG();
-
-      renderer.render(scene, camera);
-    }
-  </script>
-
-  <div id="overlay">
-    <p>
-      <button id="screenshot" style="display: none;">b</button>
-    </p>
-
-    <h1 id="see-info" class="button" style="display: none;">...open info</h1>
-
-    <h2 id="high" class="high">
-      <p id="myButton" class="button" onclick="hideButton()">
-        ...close info [x]
+  </head>
+  <body>
+    <div id="loading">loading...</div>
+    <div id="output"></div>
+
+    <div id="overlay">
+      <p>
+        <button id="screenshot" style="display: none;">b</button>
       </p>
-      The "Milkmaid's pitcher" is an animated sculpture divided by a low poly
-      model of a milk splash. The concept is to place each of its parts in a
-      different "digital reality". Currently in 3d [webGl] and AR [webXR].</p><p style="text-decoration: line-through;"> You
-      can export a static model representing a unique object at any time. It
-      will be saved to nft.storage.<br />
-      <p style="color: rgb(74, 222, 244);"><strong>NFT storage is not working, therefore the functionality to save ‘snapshots’ of 3D models is temporarily
-          suspended</strong></p>
 
-      <a href="https://twitter.com/intent/tweet?screen_name=DystopiaofI&ref_src=twsrc%5Etfw"
-        class="twitter-mention-button" data-show-count="false">@DystopiaofI</a>
-      <a href="https://bluepointart.uk/"><img id="gizmo-icon" target="_blank"
-          src="/textures/galleryLogoButton.png" /></a>
+      <h1 id="see-info" class="button" style="display: none;">...open info</h1>
 
-      <script async src="https://platform.twitter.com/widgets.js" charset="utf-8"></script>
-      <script>
-        function hideButton() {
-          const button = document.getElementById("high");
-          button.style.display = "none";
-          const seeInfo = document.getElementById("see-info");
-          seeInfo.style.display = "block";
-          seeInfo.addEventListener("click", () => {
-            button.style.display = "block";
-            seeInfo.style.display = "none";
-          });
-          // Alternatively, you can remove the button from the DOM
-          // button.parentNode.removeChild(button);
-        }
-      </script>
-    </h2>
-  </div>
-</body>
+      <div id="high" class="high">
+        <p id="myButton" class="button">...close info [x]</p>
+        <p>
+          The "Milkmaid's pitcher" is an animated sculpture divided by a low
+          poly model of a milk splash. The concept is to place each of its parts
+          in a different "digital reality". Currently in 3d [webGl] and AR
+          [webXR].
+        </p>
+        <p style="text-decoration: line-through;">
+          You can export a static model representing a unique object at any
+          time. It will be saved to nft.storage.
+        </p>
+        <p style="color: rgb(74, 222, 244);">
+          <strong>
+            NFT storage is not working, therefore the functionality to save
+            ‘snapshots’ of 3D models is temporarily suspended
+          </strong>
+        </p>
+        <p>
+          <a
+            href="https://twitter.com/intent/tweet?screen_name=DystopiaofI&ref_src=twsrc%5Etfw"
+            class="twitter-mention-button"
+            data-show-count="false"
+            >@DystopiaofI</a
+          >
+          <a href="https://bluepointart.uk/" target="_blank">
+            <img
+              id="gizmo-icon"
+              src="/textures/galleryLogoButton.png"
+              alt="Blue Point Art"
+            />
+          </a>
+        </p>
+        <script
+          async
+          src="https://platform.twitter.com/widgets.js"
+          charset="utf-8"
+        ></script>
+      </div>
+    </div>
 
+    <script type="module" src="/src/main.js"></script>
+  </body>
 </html>
