@@ -49,6 +49,7 @@ let brush;
 let surfaceSampler;
 let resultObject;
 let result;
+let controls;
 const csgEvaluator = new Evaluator();
 let isAR = false;
 let outputEl;
@@ -58,6 +59,11 @@ const gltfparams = {
   binary: true,
   maxTextureSize: 1024
 };
+
+let isFrozen = false;
+let freezeDepth = 0;
+let controlsState = null;
+const snapshotReleaseStack = [];
 
 function getCaptureTimestamp() {
   return new Date().toISOString();
@@ -123,6 +129,10 @@ async function exportGLTF(input) {
     },
     function (error) {
       console.log("An error happened during parsing", error);
+      const releaseFromStack = snapshotReleaseStack.pop();
+      if (releaseFromStack) {
+        releaseFromStack();
+      }
     },
     options
   );
@@ -167,7 +177,7 @@ function sanitizeTraitKey(key) {
     .slice(0, 40) || "attribute";
 }
 
-function buildPinataMetadata(metadata, extraKeyValues = {}) {
+function buildPinataMetadata(metadata, extraKeyValues = {}, overrideName = "") {
   const keyvalues = { ...extraKeyValues };
   if (Array.isArray(metadata.attributes)) {
     metadata.attributes.forEach((attribute) => {
@@ -182,12 +192,66 @@ function buildPinataMetadata(metadata, extraKeyValues = {}) {
   }
 
   return {
-    name: metadata.name || "milkmaids-pitcher-snapshot",
+    name: overrideName || metadata.name || "milkmaids-pitcher-snapshot",
     keyvalues
   };
 }
 
-async function uploadSnapshotToPinata(blob, filename, metadata, captureTimestamp) {
+function freezeScene() {
+  freezeDepth += 1;
+  if (freezeDepth === 1) {
+    isFrozen = true;
+
+    if (controls) {
+      controlsState = {
+        enabled: controls.enabled,
+        autoRotate: controls.autoRotate
+      };
+      controls.enabled = false;
+      controls.autoRotate = false;
+      controls.update();
+    }
+  }
+
+  let released = false;
+  return () => {
+    if (released) {
+      return;
+    }
+    released = true;
+    resumeScene();
+  };
+}
+
+function resumeScene() {
+  if (freezeDepth === 0) {
+    return;
+  }
+
+  freezeDepth -= 1;
+  if (freezeDepth > 0) {
+    return;
+  }
+
+  isFrozen = false;
+
+  if (controls && controlsState) {
+    controls.enabled = controlsState.enabled;
+    controls.autoRotate = controlsState.autoRotate;
+    controlsState = null;
+    controls.update();
+  }
+}
+
+async function uploadFileToPinata(
+  blob,
+  filename,
+  metadata,
+  captureTimestamp,
+  options = {}
+) {
+  const { extraKeyValues = {}, pinName = filename } = options;
+
   if (!PINATA_JWT) {
     throw new Error(
       "Missing Pinata JWT. Set VITE_PINATA_JWT in your environment before uploading."
@@ -203,11 +267,16 @@ async function uploadSnapshotToPinata(blob, filename, metadata, captureTimestamp
   formData.append(
     "pinataMetadata",
     JSON.stringify(
-      buildPinataMetadata(metadata, {
-        asset_filename: filename,
-        content_type: file.type || inferMimeType(filename),
-        capture_time: captureTimestamp
-      })
+      buildPinataMetadata(
+        metadata,
+        {
+          asset_filename: filename,
+          content_type: file.type || inferMimeType(filename),
+          capture_time: captureTimestamp,
+          ...extraKeyValues
+        },
+        pinName
+      )
     )
   );
   formData.append(
@@ -246,43 +315,97 @@ function inferMimeType(filename) {
   if (lower.endsWith(".gltf")) {
     return "model/gltf+json";
   }
+  if (lower.endsWith(".png")) {
+    return "image/png";
+  }
+  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) {
+    return "image/jpeg";
+  }
   return "application/octet-stream";
 }
 
-function buildMintMetadata(baseMetadata, snapshotCid, filename, blob) {
-  const uri = `ipfs://${snapshotCid}`;
-  const mimeType = blob.type || inferMimeType(filename);
+async function captureSceneScreenshot() {
+  if (!renderer || !scene || !camera) {
+    return null;
+  }
+
+  const canvas = renderer.domElement;
+  if (!canvas) {
+    return null;
+  }
+
+  const originalBackground = scene.background;
+
+  try {
+    scene.background = null;
+    renderer.render(scene, camera);
+
+    const blob = await new Promise((resolve) => {
+      canvas.toBlob((capture) => {
+        resolve(capture);
+      }, "image/png");
+    });
+
+    return blob;
+  } finally {
+    scene.background = originalBackground;
+    renderer.render(scene, camera);
+  }
+}
+
+function buildMintMetadata({ baseMetadata, asset, preview }) {
+  const assetUri = `ipfs://${asset.cid}`;
+  const assetMimeType = asset.blob.type || inferMimeType(asset.filename);
   const attributes = Array.isArray(baseMetadata.attributes)
     ? [...baseMetadata.attributes]
     : [];
 
   attributes.push({
     trait_type: "Asset CID",
-    value: snapshotCid
+    value: asset.cid
   });
   attributes.push({
     trait_type: "Asset Filename",
-    value: filename
+    value: asset.filename
   });
+
+  const files = [
+    {
+      uri: assetUri,
+      type: assetMimeType,
+      name: asset.filename
+    }
+  ];
+
+  let imageUri = baseMetadata.image;
+
+  if (preview && preview.cid) {
+    const previewUri = `ipfs://${preview.cid}`;
+    const previewMimeType = preview.blob?.type || inferMimeType(preview.filename);
+    imageUri = previewUri;
+    attributes.push({
+      trait_type: "Preview CID",
+      value: preview.cid
+    });
+    files.push({
+      uri: previewUri,
+      type: previewMimeType,
+      name: preview.filename
+    });
+  }
 
   return {
     name: baseMetadata.name,
     description: baseMetadata.description,
-    image: baseMetadata.image,
-    animation_url: uri,
+    image: imageUri,
+    animation_url: assetUri,
     external_url: PROJECT_URL,
     attributes,
-    files: [
-      {
-        uri,
-        type: mimeType,
-        name: filename
-      }
-    ]
+    files
   };
 }
 
-async function uploadMetadataJsonToPinata(metadataPayload) {
+async function uploadMetadataJsonToPinata(metadataPayload, pinName = "") {
   if (!PINATA_JWT) {
     throw new Error("Missing Pinata JWT. Unable to pin metadata JSON.");
   }
@@ -294,9 +417,13 @@ async function uploadMetadataJsonToPinata(metadataPayload) {
       "Content-Type": "application/json"
     },
     body: JSON.stringify({
-      pinataMetadata: buildPinataMetadata(metadataPayload, {
-        content_type: "application/json"
-      }),
+      pinataMetadata: buildPinataMetadata(
+        metadataPayload,
+        {
+          content_type: "application/json"
+        },
+        pinName
+      ),
       pinataContent: metadataPayload
     })
   });
@@ -316,6 +443,16 @@ async function uploadMetadataJsonToPinata(metadataPayload) {
 
 async function save(blob, filename) {
   const captureTimestamp = getCaptureTimestamp();
+  const captureSlug = captureTimestamp
+    .toLowerCase()
+    .replace(/[^0-9a-z]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  const baseName = `sherd-of-pitcher-${captureSlug}`;
+  const originalExtension = filename.includes(".")
+    ? filename.split(".").pop()
+    : "glb";
+  const extension = (originalExtension || "glb").toLowerCase();
+  const assetFilename = `${baseName}.${extension}`;
   const baseMetadata = {
     name: "Milkmaid's Pitcher Snapshot",
     description:
@@ -342,35 +479,93 @@ async function save(blob, filename) {
     showMessage(
       "> Pinata token missing. Set VITE_PINATA_JWT in your .env to enable uploads"
     );
-    saveBlob(blob, filename);
+    saveBlob(blob, assetFilename);
+    const releaseFromStack = snapshotReleaseStack.pop();
+    if (releaseFromStack) {
+      releaseFromStack();
+    }
     return;
   }
 
   try {
-    const assetCid = await uploadSnapshotToPinata(
+    const assetCid = await uploadFileToPinata(
       blob,
-      filename,
+      assetFilename,
       baseMetadata,
-      captureTimestamp
+      captureTimestamp,
+      {
+        pinName: assetFilename,
+        extraKeyValues: {
+          asset_kind: "model",
+          render_mode: isAR ? "webxr" : "webgl"
+        }
+      }
     );
-    const metadataPayload = buildMintMetadata(
+    const screenshotBlob = await captureSceneScreenshot();
+    let imageCid;
+    let screenshotFilename;
+
+    if (screenshotBlob) {
+      screenshotFilename = `${baseName}.png`;
+      imageCid = await uploadFileToPinata(
+        screenshotBlob,
+        screenshotFilename,
+        baseMetadata,
+        captureTimestamp,
+        {
+          pinName: screenshotFilename,
+          extraKeyValues: {
+            asset_kind: "preview",
+            content_type: "image/png"
+          }
+        }
+      );
+    }
+
+    const metadataPayload = buildMintMetadata({
       baseMetadata,
-      assetCid,
-      filename,
-      blob
+      asset: {
+        cid: assetCid,
+        filename: assetFilename,
+        blob
+      },
+      preview: imageCid
+        ? {
+            cid: imageCid,
+            filename: screenshotFilename,
+            blob: screenshotBlob
+          }
+        : null
+    });
+
+    const metadataFileName = `${baseName}.json`;
+    const metadataCid = await uploadMetadataJsonToPinata(
+      metadataPayload,
+      metadataFileName
     );
-    const metadataCid = await uploadMetadataJsonToPinata(metadataPayload);
 
     showMessage(`> Pinata now hosting asset ${assetCid}`);
+    if (imageCid) {
+      showMessage(`> Preview image pinned as ${imageCid}`);
+    }
     showMessage(`> Metadata pinned as ${metadataCid}`);
     showMessage("> you can mint using the metadata URI");
     showLink(`${PINATA_GATEWAY}${metadataCid}`);
-    showMessage(`> asset preview from Pinata gateway:`);
+    if (imageCid) {
+      showMessage(`> Preview image from Pinata gateway:`);
+      showLink(`${PINATA_GATEWAY}${imageCid}`);
+    }
+    showMessage(`> GLB download from Pinata gateway:`);
     showLink(`${PINATA_GATEWAY}${assetCid}`);
   } catch (error) {
     console.error(error);
     showMessage("> unable to reach Pinata, downloaded snapshot locally instead");
-    saveBlob(blob, filename);
+    saveBlob(blob, assetFilename);
+  } finally {
+    const releaseFromStack = snapshotReleaseStack.pop();
+    if (releaseFromStack) {
+      releaseFromStack();
+    }
   }
 }
 
@@ -388,6 +583,10 @@ async function downloadPitcher(event) {
   if (event && typeof event.preventDefault === "function") {
     event.preventDefault();
   }
+
+  const release = freezeScene();
+  snapshotReleaseStack.push(release);
+
   csgEvaluator.useGroups = params.useGroups;
   result = csgEvaluator.evaluate(
     pitcherBrush,
@@ -399,9 +598,21 @@ async function downloadPitcher(event) {
   result.castShadow = true;
   result.receiveShadow = true;
 
-  /////////////////////////////////
-  // Instantiate a exporter
-  exportGLTF(result);
+  renderer.render(scene, camera);
+
+  try {
+    /////////////////////////////////
+    // Instantiate a exporter
+    exportGLTF(result);
+  } catch (error) {
+    console.error("Failed to export GLB", error);
+    const releaseFromStack = snapshotReleaseStack.pop();
+    if (releaseFromStack) {
+      releaseFromStack();
+    } else {
+      release();
+    }
+  }
 }
 
 var saveFile = function (strData, filename) {
@@ -546,7 +757,7 @@ async function init() {
     20
   );
 
-  const controls = new OrbitControls(camera, renderer.domElement);
+  controls = new OrbitControls(camera, renderer.domElement);
   controls.autoRotate = true;
   controls.target.set(0, 0, -1);
   controls.update();
@@ -717,8 +928,10 @@ function animate() {
 }
 
 function render() {
-  rotatePitcher();
-  updateCSG();
+  if (!isFrozen) {
+    rotatePitcher();
+    updateCSG();
+  }
 
   renderer.render(scene, camera);
 }
