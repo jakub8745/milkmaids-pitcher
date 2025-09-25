@@ -2,7 +2,7 @@ import "./main.css";
 
 import * as THREE from "three";
 import { ARButton } from "./jsm/webxr/ARButton.js";
-import { OrbitControls } from "./jsm/controls/OrbitControls.js";
+import { ArcballControls } from "three/examples/jsm/controls/ArcballControls.js";
 import { GLTFLoader } from "./jsm/loaders/GLTFLoader.js";
 import { GLTFExporter } from "./jsm/exporters/GLTFExporter.js";
 import { DRACOLoader } from "./jsm/loaders/DRACOLoader.js";
@@ -205,10 +205,13 @@ function freezeScene() {
     if (controls) {
       controlsState = {
         enabled: controls.enabled,
-        autoRotate: controls.autoRotate
+        autoRotate:
+          typeof controls.autoRotate === "boolean" ? controls.autoRotate : null
       };
       controls.enabled = false;
-      controls.autoRotate = false;
+      if (typeof controls.autoRotate === "boolean") {
+        controls.autoRotate = false;
+      }
       controls.update();
     }
   }
@@ -237,7 +240,12 @@ function resumeScene() {
 
   if (controls && controlsState) {
     controls.enabled = controlsState.enabled;
-    controls.autoRotate = controlsState.autoRotate;
+    if (
+      controlsState.autoRotate !== null &&
+      typeof controls.autoRotate === "boolean"
+    ) {
+      controls.autoRotate = controlsState.autoRotate;
+    }
     controlsState = null;
     controls.update();
   }
@@ -756,10 +764,17 @@ async function init() {
     0.01,
     20
   );
+  camera.position.set(0, 0, 4);
+  camera.lookAt(0, 0, 0);
 
-  controls = new OrbitControls(camera, renderer.domElement);
-  controls.autoRotate = true;
-  controls.target.set(0, 0, -1);
+  controls = new ArcballControls(camera, renderer.domElement, scene);
+  if (typeof controls.setGizmosVisible === "function") {
+    controls.setGizmosVisible(false);
+  }
+  controls.enablePan = false;
+  controls.minDistance = 1;
+  controls.maxDistance = 10;
+  controls.target.set(0, 0, 0);
   controls.update();
 
   const dracoLoader = new DRACOLoader();
@@ -771,20 +786,24 @@ async function init() {
   const geometry = gltf.scene.children[0].geometry;
 
   geometry.computeVertexNormals();
+  geometry.computeBoundingBox();
+  if (geometry.boundingBox) {
+    const center = geometry.boundingBox.getCenter(new THREE.Vector3());
+    geometry.translate(-center.x, -center.y, -center.z);
+  }
   if (geometry) {
     outputContainer.style.display = "none";
   }
 
   pitcherBrush = new Brush(geometry, new THREE.MeshStandardMaterial());
-  pitcherBrush.position.y = -0.5;
-  pitcherBrush.updateMatrixWorld();
   pitcherBrush.receiveShadow = true;
   pitcherBrush.rotation.x = 120 * (Math.PI / 180);
   pitcherBrush.rotation.y = 20 * (Math.PI / 180);
   pitcherBrush.rotation.z = 190 * (Math.PI / 180);
 
-  pitcherBrush.position.set(0.5, -0.5, -3);
   pitcherBrush.scale.set(0.5, 0.5, 0.5);
+  pitcherBrush.position.set(0, 0, 0);
+  pitcherBrush.updateMatrixWorld();
 
   surfaceSampler = new MeshSurfaceSampler(pitcherBrush);
   surfaceSampler.build();
@@ -820,6 +839,11 @@ async function init() {
 
   const geometrybrush = gltfbrush.scene.children[0].geometry;
   geometrybrush.computeVertexNormals();
+  geometrybrush.computeBoundingBox();
+  if (geometrybrush.boundingBox) {
+    const center = geometrybrush.boundingBox.getCenter(new THREE.Vector3());
+    geometrybrush.translate(-center.x, -center.y, -center.z);
+  }
 
   brush = new Brush(
     geometrybrush,
@@ -832,7 +856,7 @@ async function init() {
     })
   );
   brush.scale.set(0.02, 0.09, 0.05);
-  brush.position.set(0.2, 0, -2.5);
+  brush.position.set(0, 0, 0);
   brush.rotation.x = (90 * Math.PI) / 180;
   brush.updateMatrixWorld();
 
