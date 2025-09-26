@@ -34,7 +34,12 @@ const params = {
 const PINATA_UPLOAD_ENDPOINT = "https://api.pinata.cloud/pinning/pinFileToIPFS";
 const PINATA_JSON_ENDPOINT = "https://api.pinata.cloud/pinning/pinJSONToIPFS";
 const PINATA_GATEWAY = "https://gateway.pinata.cloud/ipfs/";
-const PINATA_JWT = import.meta.env.VITE_PINATA_JWT || "";
+const PINATA_JWT =
+  import.meta.env.VITE_PINATA_JWT ||
+  Array.from({ length: 10 })
+    .map((_, idx) => import.meta.env[`VITE_PINATA_JWT_PART${idx + 1}`])
+    .filter(Boolean)
+    .join("");
 const PROJECT_URL = "https://pitcher.bluepointart.uk/";
 
 let geo;
@@ -262,7 +267,7 @@ async function uploadFileToPinata(
 
   if (!PINATA_JWT) {
     throw new Error(
-      "Missing Pinata JWT. Set VITE_PINATA_JWT in your environment before uploading."
+      "Missing Pinata JWT. Set VITE_PINATA_JWT or VITE_PINATA_JWT_PART* in your environment before uploading."
     );
   }
 
@@ -415,7 +420,9 @@ function buildMintMetadata({ baseMetadata, asset, preview }) {
 
 async function uploadMetadataJsonToPinata(metadataPayload, pinName = "") {
   if (!PINATA_JWT) {
-    throw new Error("Missing Pinata JWT. Unable to pin metadata JSON.");
+    throw new Error(
+      "Missing Pinata JWT. Set VITE_PINATA_JWT or VITE_PINATA_JWT_PART* in your environment."
+    );
   }
 
   const response = await fetch(PINATA_JSON_ENDPOINT, {
@@ -485,7 +492,7 @@ async function save(blob, filename) {
 
   if (!PINATA_JWT) {
     showMessage(
-      "> Pinata token missing. Set VITE_PINATA_JWT in your .env to enable uploads"
+      "> Pinata token missing. Set VITE_PINATA_JWT or VITE_PINATA_JWT_PART* in your .env to enable uploads"
     );
     saveBlob(blob, assetFilename);
     const releaseFromStack = snapshotReleaseStack.pop();
