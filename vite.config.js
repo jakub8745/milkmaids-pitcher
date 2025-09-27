@@ -1,6 +1,9 @@
 import { defineConfig } from "vite";
 
 export default defineConfig({
+  server: {
+    allowedHosts: ["3af603de1db9.ngrok-free.app"]
+  },
   build: {
     chunkSizeWarningLimit: 1024,
     rollupOptions: {

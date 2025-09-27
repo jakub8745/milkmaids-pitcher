@@ -41,6 +41,8 @@ const PINATA_JWT =
     .filter(Boolean)
     .join("");
 const PROJECT_URL = "https://pitcher.bluepointart.uk/";
+const DEFAULT_MODEL_POSITION = new THREE.Vector3(0, 0, 0);
+const AR_MODEL_OFFSET = new THREE.Vector3(0, -0.35, -2.25);
 
 let geo;
 
@@ -58,6 +60,7 @@ let controls;
 const csgEvaluator = new Evaluator();
 let isAR = false;
 let outputEl;
+let environmentTexture;
 const gltfparams = {
   trs: false,
   onlyVisible: false,
@@ -751,12 +754,12 @@ async function init() {
 
   // scene setup
   scene = new THREE.Scene();
-  const texture = new THREE.TextureLoader().load(
+  environmentTexture = new THREE.TextureLoader().load(
     "/textures/landscape.jpg",
     render
   );
-  texture.mapping = THREE.EquirectangularReflectionMapping;
-  scene.background = texture;
+  environmentTexture.mapping = THREE.EquirectangularReflectionMapping;
+  scene.background = environmentTexture;
 
   // lights
 
@@ -905,8 +908,15 @@ async function init() {
       params.operation = 1;
     }
     isAR = renderer.xr.isPresenting;
-
     updateCSG();
+  });
+  renderer.xr.addEventListener("sessionend", function () {
+    isAR = false;
+    if (outputEl) {
+      outputEl.style.display = "";
+    }
+    scene.background = environmentTexture;
+    applyModelPlacement();
   });
   window.addEventListener(
     "resize",
@@ -918,6 +928,19 @@ async function init() {
     },
     false
   );
+}
+
+function applyModelPlacement() {
+  if (!result) {
+    return;
+  }
+
+  const targetPosition = isAR ? AR_MODEL_OFFSET : DEFAULT_MODEL_POSITION;
+
+  if (!result.position.equals(targetPosition)) {
+    result.position.copy(targetPosition);
+    result.updateMatrixWorld();
+  }
 }
 
 async function updateCSG() {
@@ -933,6 +956,7 @@ async function updateCSG() {
     result.castShadow = true;
     result.receiveShadow = true;
     scene.add(result);
+    applyModelPlacement();
   }
 }
 ////////////////////////////////////////////////////////////////////////////////////
