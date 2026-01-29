@@ -1,0 +1,113 @@
+name: Build + Pin to IPFS + Update DNSLink
+
+on:
+  push:
+    branches: ["gh-pages"]
+
+env:
+  DNSLINK_RECORD_NAME: ${{ secrets.DNSLINK_RECORD_NAME || '' }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npm ci
+      - run: |
+          if [ -n "${{ secrets.SITE_URL }}" ]; then
+            SITE_URL="${{ secrets.SITE_URL }}" npm run build
+          else
+            npm run build
+          fi
+
+      - name: Upload site to Pinata
+        env:
+          PINATA_JWT: ${{ secrets.PINATA_JWT }}
+        run: |
+          if [ -z "${PINATA_JWT}" ]; then
+            echo "PINATA_JWT is empty."
+            exit 1
+          fi
+          if [ ! -d dist ]; then
+            echo "dist/ not found."
+            exit 1
+          fi
+          echo "Upload file count: $(find dist -type f | wc -l | tr -d ' ')"
+          du -ch dist | tail -n1
+          FILE_ARGS=()
+          while IFS= read -r -d '' file; do
+            rel="${file#dist/}"
+            FILE_ARGS+=("-F" "file=@${file};filename=dist/${rel}")
+          done < <(find dist -type f -print0)
+          RESPONSE_FILE="$(mktemp)"
+          STATUS=$(curl -sS -o "${RESPONSE_FILE}" -w "%{http_code}" \
+            -X POST \
+            -H "Authorization: Bearer ${PINATA_JWT}" \
+            -F 'pinataOptions={"wrapWithDirectory":false}' \
+            "${FILE_ARGS[@]}" \
+            https://api.pinata.cloud/pinning/pinFileToIPFS)
+          echo "Pinata upload HTTP status: ${STATUS}"
+          if [ "${STATUS}" -ge 400 ]; then
+            echo "Pinata upload error body:"
+            cat "${RESPONSE_FILE}"
+            exit 1
+          fi
+          CID=$(node -p "JSON.parse(require('fs').readFileSync('${RESPONSE_FILE}', 'utf8')).IpfsHash")
+          echo "CID=$CID" >> $GITHUB_ENV
+          echo "Pinned path: /ipfs/${CID}"
+
+      - name: Update DNSLink on Cloudflare
+        env:
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CF_ZONE_ID: ${{ secrets.CF_ZONE_ID }}
+          DNSLINK_RECORD_NAME: ${{ env.DNSLINK_RECORD_NAME }}
+          CF_WEB3_HOSTNAME_ID: ${{ secrets.CF_WEB3_HOSTNAME_ID }}
+        run: |
+          if [ -n "${CF_WEB3_HOSTNAME_ID}" ]; then
+            node -e '
+            const token = process.env.CF_API_TOKEN;
+            const zone = process.env.CF_ZONE_ID;
+            const hostnameId = process.env.CF_WEB3_HOSTNAME_ID;
+            const cid = process.env.CID;
+            const dnslink = `/ipfs/${cid}`;
+            const api = `https://api.cloudflare.com/client/v4/zones/${zone}/web3/hostnames/${hostnameId}`;
+            const headers = { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" };
+            (async () => {
+              const body = JSON.stringify({ dnslink });
+              const resp = await fetch(api, { method: "PATCH", headers, body });
+              const out = await resp.json();
+              if (!out.success) { console.error(out); process.exit(1); }
+            })();
+            '
+            exit 0
+          fi
+          if [ -z "${DNSLINK_RECORD_NAME}" ]; then
+            echo "DNSLINK_RECORD_NAME is empty; skipping DNSLink update."
+            exit 0
+          fi
+          node -e '
+          const fetch = globalThis.fetch;
+          const token = process.env.CF_API_TOKEN;
+          const zone = process.env.CF_ZONE_ID;
+          const name = process.env.DNSLINK_RECORD_NAME;
+          const cid = process.env.CID;
+          const content = `dnslink=/ipfs/${cid}`;
+          const api = `https://api.cloudflare.com/client/v4/zones/${zone}/dns_records`;
+          const headers = { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" };
+          (async () => {
+            const list = await fetch(`${api}?type=TXT&name=${encodeURIComponent(name)}`, { headers });
+            const data = await list.json();
+            const record = data.result?.[0];
+            const body = JSON.stringify({ type: "TXT", name, content, ttl: 1 });
+            const resp = record
+              ? await fetch(`${api}/${record.id}`, { method: "PUT", headers, body })
+              : await fetch(api, { method: "POST", headers, body });
+            const out = await resp.json();
+            if (!out.success) { console.error(out); process.exit(1); }
+          })();
+          '

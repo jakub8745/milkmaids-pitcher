@@ -31,8 +31,13 @@ const params = {
   }
 };
 
-const PINATA_UPLOAD_ENDPOINT = "https://api.pinata.cloud/pinning/pinFileToIPFS";
-const PINATA_JSON_ENDPOINT = "https://api.pinata.cloud/pinning/pinJSONToIPFS";
+const PINATA_PROXY_URL = import.meta.env.VITE_PINATA_PROXY_URL;
+const PINATA_UPLOAD_ENDPOINT = PINATA_PROXY_URL
+  ? `${PINATA_PROXY_URL.replace(/\/+$/, "")}/pinFile`
+  : "https://api.pinata.cloud/pinning/pinFileToIPFS";
+const PINATA_JSON_ENDPOINT = PINATA_PROXY_URL
+  ? `${PINATA_PROXY_URL.replace(/\/+$/, "")}/pinJSON`
+  : "https://api.pinata.cloud/pinning/pinJSONToIPFS";
 const PINATA_GATEWAY = "https://gateway.pinata.cloud/ipfs/";
 const PINATA_JWT =
   import.meta.env.VITE_PINATA_JWT ||
@@ -268,9 +273,9 @@ async function uploadFileToPinata(
 ) {
   const { extraKeyValues = {}, pinName = filename } = options;
 
-  if (!PINATA_JWT) {
+  if (!PINATA_JWT && !PINATA_PROXY_URL) {
     throw new Error(
-      "Missing Pinata JWT. Set VITE_PINATA_JWT or VITE_PINATA_JWT_PART* in your environment before uploading."
+      "Missing Pinata auth. Set VITE_PINATA_PROXY_URL or VITE_PINATA_JWT (or VITE_PINATA_JWT_PART*) before uploading."
     );
   }
 
@@ -304,9 +309,11 @@ async function uploadFileToPinata(
 
   const response = await fetch(PINATA_UPLOAD_ENDPOINT, {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${PINATA_JWT}`
-    },
+    headers: PINATA_PROXY_URL
+      ? {}
+      : {
+          Authorization: `Bearer ${PINATA_JWT}`
+        },
     body: formData
   });
 
@@ -422,18 +429,22 @@ function buildMintMetadata({ baseMetadata, asset, preview }) {
 }
 
 async function uploadMetadataJsonToPinata(metadataPayload, pinName = "") {
-  if (!PINATA_JWT) {
+  if (!PINATA_JWT && !PINATA_PROXY_URL) {
     throw new Error(
-      "Missing Pinata JWT. Set VITE_PINATA_JWT or VITE_PINATA_JWT_PART* in your environment."
+      "Missing Pinata auth. Set VITE_PINATA_PROXY_URL or VITE_PINATA_JWT (or VITE_PINATA_JWT_PART*)."
     );
   }
 
   const response = await fetch(PINATA_JSON_ENDPOINT, {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${PINATA_JWT}`,
-      "Content-Type": "application/json"
-    },
+    headers: PINATA_PROXY_URL
+      ? {
+          "Content-Type": "application/json"
+        }
+      : {
+          Authorization: `Bearer ${PINATA_JWT}`,
+          "Content-Type": "application/json"
+        },
     body: JSON.stringify({
       pinataMetadata: buildPinataMetadata(
         metadataPayload,
@@ -493,9 +504,9 @@ async function save(blob, filename) {
 
   showMessage("> preparing Pinata upload");
 
-  if (!PINATA_JWT) {
+  if (!PINATA_JWT && !PINATA_PROXY_URL) {
     showMessage(
-      "> Pinata token missing. Set VITE_PINATA_JWT or VITE_PINATA_JWT_PART* in your .env to enable uploads"
+      "> Pinata auth missing. Set VITE_PINATA_PROXY_URL or VITE_PINATA_JWT (or VITE_PINATA_JWT_PART*) to enable uploads"
     );
     saveBlob(blob, assetFilename);
     const releaseFromStack = snapshotReleaseStack.pop();

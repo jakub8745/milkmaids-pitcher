@@ -1,0 +1,12 @@
+
+
+# Copy this file to .env and fill in your Pinata JWT.
+# Vite exposes only variables prefixed with VITE_ to the client.
+
+# Option A: single JWT value
+VITE_PINATA_JWT=PASTE_YOUR_PINATA_JWT_HERE
+
+# Option B: split JWT into parts (use when env var length limits exist)
+# VITE_PINATA_JWT_PART1=
+# VITE_PINATA_JWT_PART2=
+# VITE_PINATA_JWT_PART3=
